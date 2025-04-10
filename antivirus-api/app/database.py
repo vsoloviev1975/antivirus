@@ -7,6 +7,12 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from config import settings
+import logging
+
+# Настройка логгера SQLAlchemy
+logging.basicConfig()
+sql_logger = logging.getLogger('sqlalchemy.engine')
+sql_logger.setLevel(logging.INFO)  # Уровень логирования SQL запросов
 
 # Создаем базовый класс для моделей
 Base = declarative_base()
@@ -60,14 +66,17 @@ def check_and_create_postgres_db() -> bool:
 # Возвращает engine для работы с указанной базой данных
 def get_database_engine():
     try:
-        engine = create_engine(get_db_url())
-        # Проверяем подключение
+        engine = create_engine(
+            get_db_url(),
+            pool_pre_ping=True,  # Проверка соединения перед использованием
+            echo=True  # Для отладки SQL запросов
+        )
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         return engine
     except Exception as e:
         print(f"Ошибка подключения к базе данных: {e}")
-        return None            
+        return None          
 
 # Создаем движок SQLAlchemy
 engine = get_database_engine()
