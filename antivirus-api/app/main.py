@@ -1,140 +1,116 @@
-﻿"""
-Главный файл приложения - точка входа FastAPI.
-Интегрирует все компоненты системы: API, БД, сервисы, утилиты.
+﻿from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from uuid import UUID
+from pathlib import Path
+import uvicorn
+from typing import List, Optional
+from fastapi.responses import JSONResponse
+from database import check_and_create_postgres_db, get_database_engine, create_tables
+from dbengine import call_files_iud_function, get_file_info_json, get_all_files_json, delete_file_id
+
+
+app = FastAPI(title="Antivirus File Storage API")
+
+# Инициализация базы данных при старте приложения
+@app.on_event("startup")
+async def startup_event():
+    if not check_and_create_postgres_db():
+        raise RuntimeError("Failed to initialize database")
+    engine = get_database_engine()
+    if engine is None:
+        raise RuntimeError("Failed to connect to database")
+    create_tables()
 """
-
-import logging
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
-
-# Импорт всех необходимых компонентов
-from app.core.config import settings
-from app.core.database import engine, Base, sessionmanager
-from app.core.security import validate_ecp_keys
-from app.utils.rabin_karp import RabinKarp
-from app.utils.storage import TempFileManager
-from app.services import (
-    AuthService,
-    UserService,
-    SignatureService,
-    FileService,
-    ScannerService
-)
-from app.api import api_router
-from app.models import User, Signature, File, AuditLog, SignatureHistory
-
-# Настройка логгера
-logging.basicConfig(
-    level=logging.INFO if not settings.DEBUG else logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """
-    Контекстный менеджер для управления жизненным циклом приложения.
-    Обрабатывает startup и shutdown события.
-    """
-    # Startup логика
-    logger.info("Starting Antivirus API...")
-    
+Создает или обновляет файл в базе данных
+- **name**: Имя файла (обязательно)
+- **file**: Файл для загрузки (опционально для обновления)
+- **scan_result**: Результат сканирования в JSON (опционально)
+- **file_id**: UUID файла для обновления (опционально, если не указан - создается новый)
+"""
+@app.post("/files/upload")
+async def create_file_db(
+    name: str = Form(...),
+    file: UploadFile = File(None)
+):
     try:
-        # Инициализация подключения к БД
-        async with engine.begin() as conn:
-            if settings.DEBUG:
-                await conn.run_sync(Base.metadata.create_all)
-                logger.info("Database tables verified/created")
-        
-        # Проверка ключей ЭЦП
-        validate_ecp_keys()
-        logger.info("Digital signature keys validated")
-        
-        # Инициализация сервисов
-        init_services()
-        logger.info("All services initialized")
-        
-        yield  # Здесь приложение работает
-        
-    finally:
-        # Shutdown логика
-        logger.info("Shutting down Antivirus API...")
-        await sessionmanager.close()
-        logger.info("Database connections closed")
+        # Если передан файл - сохраняем его временно
+        file_path = None
+        if file:
+            temp_dir = Path("temp_files")
+            temp_dir.mkdir(exist_ok=True)
+            file_path = temp_dir / file.filename
+            with open(file_path, "wb") as buffer:
+                buffer.write(await file.read())
 
-def init_services():
-    """Инициализация всех сервисов приложения."""
-    # Инициализация утилит
-    RabinKarp.init_base_params()
-    TempFileManager.init_temp_dirs()
-    
-    # Инициализация сервисов с зависимостями
-    user_service = UserService()
-    auth_service = AuthService(user_service)
-    signature_service = SignatureService()
-    file_service = FileService()
-    scanner_service = ScannerService()
-    
-    # Можно добавить в контейнер зависимостей
-    services = {
-        "user_service": user_service,
-        "auth_service": auth_service,
-        "signature_service": signature_service,
-        "file_service": file_service,
-        "scanner_service": scanner_service,
-    }
-    
-    return services
+        # Вызов функции обработки
+        result_uuid = call_files_iud_function(
+            name=name,
+            file_path=str(file_path) if file_path else None
+        )
 
-def create_app() -> FastAPI:
-    """
-    Фабрика для создания экземпляра FastAPI приложения.
-    
-    Returns:
-        FastAPI: Сконфигурированное приложение со всеми зависимостями
-    """
-    app = FastAPI(
-        title="Antivirus API",
-        description="Сервис для антивирусного сканирования файлов с использованием сигнатурного анализа",
-        version="1.0.0",
-        lifespan=lifespan,
-        docs_url="/api/docs" if settings.DEBUG else None,
-        redoc_url="/api/redoc" if settings.DEBUG else None,
-        openapi_url="/api/openapi.json" if settings.DEBUG else None,
-    )
-    
-    # Настройка CORS
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS.split(","),
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-    
-    # Подключение главного роутера API
-    app.include_router(
-        api_router,
-        prefix=settings.API_V1_STR,
-    )
-    
-    # Health check endpoint
-    @app.get("/health", include_in_schema=False)
-    async def health_check():
-        return {"status": "OK", "version": "1.0.0"}
-    
-    return app
+        # Удаляем временный файл если он был
+        if file_path and file_path.exists():
+            file_path.unlink()
 
-# Создание экземпляра приложения
-app = create_app()
+        return {"file_id": str(result_uuid)}
+    
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+        
+"""
+Получает информацию о файле по его UUID
+- **file_id**: UUID файла в базе данных
+"""
+@app.get("/files/{file_id}")
+async def get_file_info(file_id: str):
+    try:
+        print("RUN get_file_info")
+        file_uuid = UUID(file_id)
+        file_info = get_file_info_json(file_uuid)
+        if not file_info:
+            raise HTTPException(status_code=404, detail="File not found")
+        return file_info
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid UUID format")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+        
+"""
+Получает список всех файлов из базы данных
+Возвращает массив объектов с информацией о файлах
+"""
+@app.get("/allfiles", response_model=List[dict])
+async def get_all_files():
+    try:
+        print("RUN get_all_files_json")
+        files = get_all_files_json()
+        if files is None:
+            return JSONResponse(content=[], status_code=200)
+        return files
+    except Exception as e:
+        print(f"API error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+        
+"""
+Удаляет файл в базе данных
+- **file_id**: UUID файла для удаления
+"""
+@app.delete("/files/{file_id}")
+async def delete_file(file_id: str):
+    try:
+        print("RUN delete_file")
+        file_uuid = UUID(file_id)
+        deleted_id = delete_file_id(file_uuid)
+        print("Delete file: ", str(deleted_id))
+        if deleted_id is None:
+            return {"deleted_file_id": "File not found"}
+            raise HTTPException(status_code=404, detail="File not found")
+        return {"deleted_file_id": str(deleted_id)}
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid UUID format")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+        
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        "app.main:app",
-        host=settings.APP_HOST,
-        port=settings.APP_PORT,
-        reload=settings.DEBUG,
-        log_level="debug" if settings.DEBUG else "info",
-    )
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+    

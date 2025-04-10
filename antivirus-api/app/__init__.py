@@ -1,18 +1,22 @@
-﻿"""
-Инициализация пакета приложения.
-Экспортирует основные компоненты для удобного импорта.
+"""
+Пакет для работы с базой данных антивирусного сервиса
+
+Содержит:
+- database.py - настройки подключения и модели
+- dbengine.py - основные функции работы с файлами
+- main.py - FastAPI приложение
 """
 
-__version__ = "1.0.0"  # Версия приложения
-__author__ = "Your Name <your.email@example.com>"
-
-# Экспорт основных компонентов
-from .main import app  # FastAPI приложение
-from .core.config import settings  # Настройки приложения
+from database import Base, engine, get_db, create_tables
+from dbengine import call_files_iud_function, get_file_info_json, get_all_files_json, delete_file_id
 
 __all__ = [
-    'app',
-    'settings'
+    'Base',
+    'engine',
+    'get_db',
+    'create_tables',
+    'call_files_iud_function',
+    'get_file_info_json',
+    'get_all_files_json',
+    'delete_file_id'
 ]
-
-print(f"Initializing Antivirus API v{__version__}")  # Лог инициализации

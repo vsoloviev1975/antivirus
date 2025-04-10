@@ -1,29 +1,11 @@
-﻿# Основные зависимости FastAPI
-fastapi==0.95.2
+﻿fastapi==0.95.2
 uvicorn==0.22.0
-python-multipart==0.0.6  # Для загрузки файлов
-
-# База данных и ORM
+python-jose[cryptography]==3.3.0
+passlib==1.7.4
+python-multipart==0.0.6
+psycopg2-binary==2.9.6
+python-dotenv==1.0.0
 sqlalchemy==2.0.15
-asyncpg==0.27.0  # Асинхронный драйвер PostgreSQL
-alembic==1.11.1  # Миграции БД
-psycopg2-binary==2.9.6  # Синхронный драйвер для некоторых операций
-
-# Аутентификация и безопасность
-python-jose[cryptography]==3.3.0  # JWT токены
-passlib[bcrypt]==1.7.4  # Хеширование паролей
-cryptography==40.0.2  # Криптография для ЭЦП
-
-# Валидация данных
 pydantic==1.10.7
-python-dotenv==1.0.0  # Загрузка .env файлов
-
-# Утилиты
-loguru==0.7.0  # Логирование
-aiofiles==23.1.0  # Асинхронная работа с файлами
-python-magic==0.4.27  # Определение типов файлов
-
-# Тестирование (опционально)
-pytest==7.3.1
-pytest-asyncio==0.21.0
-httpx==0.24.1  # Асинхронные HTTP запросы
+python-dotenv==1.0.0  # Для работы с .env файлом
+aiofiles==23.2.1  # Для работы с файлами в асинхронном режиме
