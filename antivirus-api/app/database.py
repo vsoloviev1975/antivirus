@@ -88,9 +88,11 @@ def create_tables():
     tables_sql = [
         """
         -- Добавляем расширение работы с UUID
-        CREATE EXTENSION IF NOT EXISTS "uuid-ossp"
-        SCHEMA public
-        VERSION "1.1";
+        CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+        """,
+        """
+        -- Добавляем расширение криптографические функции
+        CREATE EXTENSION IF NOT EXISTS "pgcrypto";
         """,
         """
         -- 1. Создание схемы (если не существует)
@@ -264,6 +266,134 @@ def create_tables():
         COST 100;
 
         COMMENT ON FUNCTION antivirus.files_iud(TEXT, BYTEA, JSON, UUID) IS 'Функция записи/обновления/удаления файла';
+        """,
+        """
+        DROP FUNCTION IF EXISTS antivirus.scan_file_with_rabin_karp(UUID,UUID);
+        CREATE OR REPLACE FUNCTION antivirus.scan_file_with_rabin_karp(
+            p_file_id UUID,                  -- id файла для сканирования
+            p_signature_id UUID DEFAULT NULL -- id сигнатуры для сканирования, если NULL, то сканируем всеми сигнатурами
+        ) RETURNS JSONB AS $$
+        DECLARE
+            v_file_content BYTEA;               -- Содержимое файла в бинарном формате
+            v_file_size INT;                    -- Размер файла в байтах
+            v_scan_result JSONB := '[]'::JSONB; -- Результаты сканирования
+            v_signature_record RECORD;          -- Данные текущей сигнатуры
+            v_base BIGINT := 256;               -- Основание для полиномиального хэша
+            v_mod BIGINT := 1000000007;         -- Модуль для хэш-функции
+            v_power BIGINT := 1;                -- base^(window_size-1) mod mod
+            v_target_hash BIGINT;               -- Хэш первых байт сигнатуры
+            v_current_hash BIGINT := 0;         -- Текущий хэш скользящего окна
+            v_window_size INT;                  -- Размер окна сравнения (определяется динамически)
+            v_i INT;                            -- Счетчики циклов
+            v_j INT;
+            v_match_found BOOLEAN;              -- Флаг совпадения
+            v_remainder_content BYTEA;          -- Хвост сигнатуры из файла
+            v_remainder_hash TEXT;              -- MD5 хэш хвоста
+            v_offset_start INT;                 -- Смещение начала сигнатуры
+            v_offset_end INT;                   -- Смещение конца сигнатуры
+            v_result_entry JSONB;               -- Запись результата
+            v_file_info_json JSONB;               -- Возврат результата
+            v_cursor CURSOR FOR                 -- Курсор для выборки сигнатур
+                SELECT * FROM antivirus.signatures
+                WHERE status = 'ACTUAL'
+                AND (p_signature_id IS NULL OR id = p_signature_id);
+        BEGIN
+            -- Получаем содержимое файла
+            SELECT content, size INTO v_file_content, v_file_size
+            FROM antivirus.files
+            WHERE id = p_file_id;
+
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'Файл с ID % не найден', p_file_id;
+            END IF;
+
+            -- Перебираем все сигнатуры (или конкретную)
+            FOR v_signature_record IN v_cursor LOOP
+                -- Определяем размер окна по длине first_bytes
+                v_window_size := length(v_signature_record.first_bytes);
+
+                -- Пересчитываем power для текущего размера окна
+                v_power := 1;
+                FOR i IN 1..(v_window_size-1) LOOP
+                    v_power := (v_power * v_base) % v_mod;
+                END LOOP;
+
+                -- Вычисляем хэш первых байт сигнатуры
+                v_target_hash := 0;
+                FOR i IN 1..v_window_size LOOP
+                    IF i <= length(v_signature_record.first_bytes) THEN
+                        v_target_hash := (v_target_hash * v_base + ascii(substring(v_signature_record.first_bytes from i for 1))) % v_mod;
+                    END IF;
+                END LOOP;
+
+                -- Ищем вхождение первых байт в файле
+                v_offset_start := position(v_signature_record.first_bytes::bytea in v_file_content);
+
+                IF v_offset_start > 0 THEN
+                    -- Проверяем остаток сигнатуры
+                    v_remainder_content := substring(v_file_content
+                        from v_offset_start + v_window_size
+                        for v_signature_record.remainder_length);
+
+                    v_remainder_hash := md5(v_remainder_content);
+
+                    -- Проверяем совпадение хэша остатка
+                    v_match_found := (v_remainder_hash = v_signature_record.remainder_hash);
+
+                    -- Проверяем смещения
+                    IF v_match_found AND v_signature_record.offset_start IS NOT NULL THEN
+                        v_offset_start := v_offset_start - 1; -- преобразуем в 0-based индекс
+                        v_offset_end := v_offset_start + v_window_size + v_signature_record.remainder_length - 1;
+
+                        IF v_offset_start < v_signature_record.offset_start OR
+                           (v_signature_record.offset_end IS NOT NULL AND
+                            v_offset_end > v_signature_record.offset_end) THEN
+                            v_match_found := FALSE;
+                        END IF;
+                    END IF;
+                ELSE
+                    v_match_found := FALSE;
+                END IF;
+
+                -- Формируем запись результата
+                v_result_entry := jsonb_build_object(
+                    'signatureId', v_signature_record.id,
+                    'threatName', v_signature_record.threat_name,
+                    'offsetFromStart', CASE WHEN v_match_found THEN (v_offset_start - 1) ELSE NULL END,
+                    'offsetFromEnd', CASE WHEN v_match_found THEN
+                        (v_offset_start + v_window_size + v_signature_record.remainder_length - 1)
+                        ELSE NULL END,
+                    'matched', v_match_found
+                );
+
+                -- Добавляем запись в результаты
+                v_scan_result := v_scan_result || v_result_entry;
+            END LOOP;
+
+            -- Сохраняем результаты сканирования
+            UPDATE antivirus.files
+            SET scan_result = v_scan_result,
+                updated_at = NOW()
+            WHERE id = p_file_id;
+
+            SELECT
+                json_build_object(
+                    'id', id,
+                    'name', name,
+                    'size', size,
+                    'scan_result', scan_result,
+                    'created_at', created_at,
+                    'updated_at', updated_at
+                ) as file_info INTO v_file_info_json
+            FROM antivirus.files
+            WHERE id = p_file_id;
+
+            RETURN v_file_info_json;
+        END;
+        $$ LANGUAGE plpgsql
+        COST 100;
+
+        COMMENT ON FUNCTION antivirus.scan_file_with_rabin_karp(UUID, UUID) IS 'Функция сканирования файлов с алгоритмом Рабина-Карпа';
         """
     ]
 
