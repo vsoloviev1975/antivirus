@@ -411,25 +411,29 @@ def create_tables():
             v_digital_signature BYTEA;
             v_status TEXT;
             v_record_exists BOOLEAN;
+            v_keys TEXT[];
         BEGIN
             -- Извлекаем ID из JSON (может быть NULL для новой записи)
             v_id := (p_data->>'id')::UUID;
 
             -- Проверяем, существует ли запись с таким ID
             IF v_id IS NOT NULL THEN
-                SELECT EXISTS(SELECT 1 FROM ONLY antivirus.signatures WHERE id = v_id) INTO v_record_exists;
+                SELECT EXISTS(SELECT 1 FROM antivirus.signatures WHERE id = v_id) INTO v_record_exists;
             ELSE
                 v_record_exists := FALSE;
             END IF;
 
+            -- Получаем ключи JSON как массив
+            SELECT array_agg(key) INTO v_keys FROM jsonb_object_keys(p_data::jsonb) AS key;
+
             -- Если ID не указан или запись не существует - создаем новую
             IF v_id IS NULL OR NOT v_record_exists THEN
                 -- Проверяем обязательные поля для создания новой записи
-                IF (p_data->>'threat_name') IS NULL OR
-                   (p_data->>'first_bytes') IS NULL OR
-                   (p_data->>'remainder_hash') IS NULL OR
-                   (p_data->>'remainder_length') IS NULL OR
-                   (p_data->>'file_type') IS NULL THEN
+                IF NOT (p_data::jsonb ? 'threat_name' AND
+                        p_data::jsonb ? 'first_bytes' AND
+                        p_data::jsonb ? 'remainder_hash' AND
+                        p_data::jsonb ? 'remainder_length' AND
+                        p_data::jsonb ? 'file_type') THEN
                     RAISE EXCEPTION 'Для создания новой сигнатуры необходимо указать threat_name, first_bytes, remainder_hash, remainder_length и file_type';
                 END IF;
 
@@ -469,14 +473,14 @@ def create_tables():
                 ) RETURNING id INTO v_id;
 
             -- Если указан только ID - удаляем запись
-            ELSEIF jsonb_object_keys(p_data::jsonb) = ARRAY['id'] THEN
+            ELSEIF array_length(v_keys, 1) = 1 AND v_keys[1] = 'id' THEN
                 DELETE FROM antivirus.signatures WHERE id = v_id;
 
             -- Если запись существует и есть поля для обновления
             ELSE
                 -- Формируем динамический UPDATE с учетом только переданных полей
                 EXECUTE format('
-                    UPDATE ONLY antivirus.signatures SET
+                    UPDATE antivirus.signatures SET
                         threat_name = COALESCE(%L, threat_name),
                         first_bytes = COALESCE(%L, first_bytes),
                         remainder_hash = COALESCE(%L, remainder_hash),

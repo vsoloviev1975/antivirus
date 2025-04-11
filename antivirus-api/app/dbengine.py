@@ -16,6 +16,7 @@ from sqlalchemy.sql import compiler
 import logging
 import json
 from typing import List
+from datetime import datetime
 
 """
 Тестовая функция, показывает подготовленный SQL запрос к БД
@@ -200,5 +201,207 @@ def delete_file_id(file_id: UUID) -> Optional[UUID]:
     finally:
         db.close()
         
+"""
+Вызывает функцию antivirus.signatures_iud в PostgreSQL для добавления/изменения/удаления сигнатур
+:param signature_data: JSON-данные сигнатуры (dict)
+:return: UUID обработанной сигнатуры
+"""
+def call_signatures_iud_function(signature_data: dict) -> UUID:
+    db = next(get_db())
+    try:
+        # Преобразуем данные в JSON строку
+        json_data = json.dumps(signature_data)
+        
+        # Формируем SQL запрос
+        query = text("""
+            SELECT antivirus.signatures_iud(:json_data) AS signature_id
+        """)
+        
+        # Выполняем запрос
+        result = db.execute(query, {"json_data": json_data})
+        signature_uuid = result.scalar()
+        db.commit()
+        
+        # logger.debug(f"Processed signature with ID: {signature_uuid}")
+        return signature_uuid
+        
+    except SQLAlchemyError as e:
+        db.rollback()
+        # logger.error(f"Database error in signatures_iud: {str(e)}", exc_info=True)
+        raise SQLAlchemyError(f"Database error: {e}")
+    except Exception as e:
+        db.rollback()
+        # logger.critical(f"Unexpected error in signatures_iud: {str(e)}", exc_info=True)
+        raise e
+    finally:
+        db.close()
+        
+"""
+Получает список актуальных сигнатур с возможностью фильтрации по дате обновления
+:param since: Необязательная дата для фильтрации (только записи, обновленные после этой даты)
+:return: Список словарей с информацией о сигнатурах или None если сигнатур не найдено
+"""
+def get_actual_signatures_json(since: Optional[datetime] = None) -> Optional[List[dict]]:
+    db = next(get_db())
+    try:
+        # Базовый запрос
+        query = """
+            SELECT 
+                json_build_object(
+                    'id', id::text,
+                    'threat_name', threat_name,
+                    'first_bytes', first_bytes,
+                    'remainder_hash', remainder_hash,
+                    'remainder_length', remainder_length,
+                    'file_type', file_type,
+                    'offset_start', offset_start,
+                    'offset_end', offset_end,
+                    'status', status,
+                    'updated_at', updated_at
+                ) as signature_info
+            FROM antivirus.signatures
+            WHERE status = 'ACTUAL'
+        """
+        
+        # Добавляем фильтр по дате если нужно
+        params = {}
+        if since is not None:
+            query += " AND updated_at >= :since"
+            params["since"] = since
+        
+        query += " ORDER BY updated_at DESC"
+        
+        result = db.execute(text(query), params)
+        rows = result.fetchall()
+        
+        return [row[0] for row in rows] if rows else None
+        
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+        
+"""
+Получает сигнатуры по списку GUID
+:param guid_list: Список UUID сигнатур
+:return: Список словарей с информацией о сигнатурах или None если сигнатуры не найдены
+"""
+def get_signatures_by_guids(guid_list: List[UUID]) -> Optional[List[dict]]:
+    db = next(get_db())
+    try:
+        # Проверяем, что список не пустой
+        if not guid_list:
+            return []
+            
+        query = text("""
+            SELECT 
+                json_build_object(
+                    'id', id::text,
+                    'threat_name', threat_name,
+                    'first_bytes', first_bytes,
+                    'remainder_hash', remainder_hash,
+                    'remainder_length', remainder_length,
+                    'file_type', file_type,
+                    'offset_start', offset_start,
+                    'offset_end', offset_end,
+                    'status', status,
+                    'updated_at', updated_at
+                ) as signature_info
+            FROM antivirus.signatures
+            WHERE id = ANY(:guid_list)
+            ORDER BY updated_at DESC
+        """)
+        
+        result = db.execute(query, {"guid_list": guid_list})
+        rows = result.fetchall()
+        
+        return [row[0] for row in rows] if rows else []
+        
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise SQLAlchemyError(f"Database error: {e}")
+    except Exception as e:
+        db.rollback()
+        raise e
+    finally:
+        db.close()
+        
+"""
+Получает сигнатуры по статусу (ACTUAL или DELETED)
+:param status: Статус сигнатур для фильтрации
+:return: Список словарей с информацией о сигнатурах или пустой список если не найдено
+"""
+def get_signatures_by_status(status: str) -> List[dict]:
+    db = next(get_db())
+    try:
+        # Проверяем допустимые значения статуса
+        if status not in ('ACTUAL', 'DELETED'):
+            return []
+            
+        query = text("""
+            SELECT 
+                json_build_object(
+                    'id', id::text,
+                    'threat_name', threat_name,
+                    'first_bytes', first_bytes,
+                    'remainder_hash', remainder_hash,
+                    'remainder_length', remainder_length,
+                    'file_type', file_type,
+                    'offset_start', offset_start,
+                    'offset_end', offset_end,
+                    'status', status,
+                    'updated_at', updated_at
+                ) as signature_info
+            FROM antivirus.signatures
+            WHERE status = :status
+            ORDER BY updated_at DESC
+        """)
+        
+        result = db.execute(query, {"status": status})
+        rows = result.fetchall()
+        return [row[0] for row in rows]
+        
+    except SQLAlchemyError:
+        db.rollback()
+        return []
+    finally:
+        db.close()
+        
+"""
+Вызывает функцию antivirus.scan_file_with_rabin_karp для сканирования файла
+:param file_id: UUID файла для сканирования (обязательный)
+:param signature_id: UUID сигнатуры для сканирования (опциональный)
+:return: Результат сканирования в виде словаря
+"""
+def scan_file_with_rabin_karp(file_id: UUID, signature_id: Optional[UUID] = None) -> dict:
+    db = next(get_db())
+    try:
+        query = text("""
+            SELECT antivirus.scan_file_with_rabin_karp(:file_id, :signature_id) as scan_result
+        """)
+        
+        params = {
+            "file_id": file_id,
+            "signature_id": signature_id
+        }
+        
+        result = db.execute(query, params)
+        scan_result = result.scalar()
+        db.commit()
+        
+        return scan_result if scan_result else {}
+        
+    except SQLAlchemyError:
+        db.rollback()
+        return {}
+    finally:
+        db.close()
+
 # Экспортируем для использования в моделях
-__all__ = ['call_files_iud_function', 'get_file_info_json', 'get_all_files_json', 'delete_file_id']
+__all__ = ['call_files_iud_function', 'get_file_info_json', 'get_all_files_json', 
+           'delete_file_id', 'call_signatures_iud_function', 'get_actual_signatures_json',
+           'get_signatures_by_guids', 'get_signatures_by_status', 'scan_file_with_rabin_karp']        
