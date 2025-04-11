@@ -40,12 +40,28 @@ app = FastAPI(title="Antivirus File Storage API")
 # Инициализация базы данных при старте приложения
 @app.on_event("startup")
 async def startup_event():
-    if not check_and_create_postgres_db():
+    try:
+        logger.info("Initializing database connection")
+        
+        # Проверяем и создаем БД без автоматического начала транзакции
+        if not check_and_create_postgres_db():
+            logger.error("Failed to check/create database")
+            raise RuntimeError("Failed to check/create database")
+        
+        # Получаем engine с явным уровнем изоляции
+        engine = get_database_engine()
+        if engine is None:
+            logger.error("Failed to connect to database")
+            raise RuntimeError("Failed to connect to database")
+        
+        # Создаем таблицы в отдельном соединении
+        with engine.begin() as conn:  # Явное управление транзакцией
+            create_tables()
+            logger.info("Database tables created successfully")
+            
+    except Exception as e:
+        logger.critical(f"Database initialization failed: {str(e)}", exc_info=True)
         raise RuntimeError("Failed to initialize database")
-    engine = get_database_engine()
-    if engine is None:
-        raise RuntimeError("Failed to connect to database")
-    create_tables()
 """
 Создает или обновляет файл в базе данных
 - **file**: Файл для загрузки (обязательно)

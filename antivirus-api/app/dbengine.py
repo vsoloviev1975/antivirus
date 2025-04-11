@@ -18,6 +18,7 @@ import json
 from typing import List
 from datetime import datetime
 
+
 """
 Тестовая функция, показывает подготовленный SQL запрос к БД
 """

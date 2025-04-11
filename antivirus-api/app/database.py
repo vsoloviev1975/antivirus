@@ -6,6 +6,7 @@
 from sqlalchemy import create_engine, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.exc import SQLAlchemyError, ProgrammingError, OperationalError
 from config import settings
 import logging
 
@@ -34,7 +35,10 @@ def get_db_url():
 def check_and_create_postgres_db() -> bool:
     try:
         # Подключаемся к серверу PostgreSQL (к системной базе 'postgres')
-        temp_engine = create_engine(get_db_tmp_url())
+        temp_engine = create_engine(
+            get_db_tmp_url(),
+            isolation_level="AUTOCOMMIT"  # Устанавливаем autocommit для создания БД
+        )
         
         # Проверяем существование базы данных
         with temp_engine.connect() as conn:
@@ -44,12 +48,10 @@ def check_and_create_postgres_db() -> bool:
             
             if not result:
                 # Создаем базу данных, если ее нет
-                conn.execution_options(isolation_level="AUTOCOMMIT")
                 conn.execute(text(f"CREATE DATABASE {settings.DB_NAME}"))
                 return True
-            else:
-                return True
-                
+            return True
+            
     except ProgrammingError as e:
         print(f"Ошибка доступа: {e}")
         return False
@@ -68,9 +70,11 @@ def get_database_engine():
     try:
         engine = create_engine(
             get_db_url(),
-            pool_pre_ping=True,  # Проверка соединения перед использованием
-            echo=True  # Для отладки SQL запросов
+            pool_pre_ping=True,
+            echo=True,
+            isolation_level="READ COMMITTED"  # Явно устанавливаем уровень изоляции
         )
+        # Проверяем соединение без создания транзакции
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         return engine
@@ -161,36 +165,14 @@ def create_tables():
         """,
         """
         -- 4. Создаем таблицу history
-        CREATE TABLE IF NOT EXISTS antivirus.history
-        (
-             history_id SERIAL PRIMARY KEY,
-             signature_id UUID NOT NULL REFERENCES antivirus.signatures(id) MATCH SIMPLE ON UPDATE CASCADE ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
-             version_created_at TIMESTAMP NOT NULL DEFAULT Now(),
-             threat_name TEXT NOT NULL,
-             first_bytes VARCHAR(8) NOT NULL,
-             remainder_hash VARCHAR(64) NOT NULL,
-             remainder_length INT NOT NULL,
-             file_type TEXT NOT NULL,
-             offset_start INT NOT NULL,
-             offset_end INT NOT NULL,
-             digital_signature TEXT,
-             status TEXT NOT NULL,
-             updated_at TIMESTAMP
-        );
-        COMMENT ON TABLE antivirus.history IS 'История изменения сигнатур';
-        COMMENT ON COLUMN antivirus.history.history_id IS 'Уникальный идентификатор записи в истории';
-        COMMENT ON COLUMN antivirus.history.signature_id IS 'Ссылка на запись в таблице сигнатур (тот же id, что и в основной таблице)';
-        COMMENT ON COLUMN antivirus.history.version_created_at IS 'Момент времени, когда появилась эта версия';
-        COMMENT ON COLUMN antivirus.history.threat_name IS 'Название угрозы (копия поля на момент сохранения в истории)';
-        COMMENT ON COLUMN antivirus.history.first_bytes IS 'Первые 8 байт (копия поля)';
-        COMMENT ON COLUMN antivirus.history.remainder_hash IS 'Хэш хвоста (копия поля)';
-        COMMENT ON COLUMN antivirus.history.remainder_length IS 'Длина хвоста (копия поля)';
-        COMMENT ON COLUMN antivirus.history.file_type IS 'Тип файла (копия поля)';
-        COMMENT ON COLUMN antivirus.history.offset_start IS 'Смещение начала сигнатуры (копия поля)';
-        COMMENT ON COLUMN antivirus.history.offset_end IS 'Смещение конца сигнатуры (копия поля)';
-        COMMENT ON COLUMN antivirus.history.digital_signature IS 'Копия ЭЦП';
-        COMMENT ON COLUMN antivirus.history.status IS 'Копия статуса записи на момент сохранения версии';
-        COMMENT ON COLUMN antivirus.history.updated_at IS 'Копия значения updated_at из таблицы сигнатур';
+        CREATE TABLE antivirus.history (
+            history_id BIGSERIAL PRIMARY KEY,
+            version_created_at  TIMESTAMP NOT NULL
+        ) INHERITS (antivirus.signatures);
+        
+        COMMENT ON TABLE antivirus.history IS 'Изменения таблицы antivirus.signatures';
+        COMMENT ON COLUMN antivirus.history.history_id  IS 'Уникальный идентификатор записи в истории';
+        COMMENT ON COLUMN antivirus.history.version_created_at  IS 'Момент времени, когда появилась эта версия';
         """,
         """
         -- 5. Создаем таблицу audit
@@ -509,6 +491,157 @@ def create_tables():
         $$ LANGUAGE plpgsql;
 
         COMMENT ON FUNCTION antivirus.signatures_iud(JSON) IS 'Функция для добавления/изменения/удаления записей в таблице signatures на основе входного JSON';
+        """,
+        """
+        --DROP FUNCTION IF EXISTS antivirus.trf_signatures_history_biud() CASCADE;
+        CREATE OR REPLACE FUNCTION antivirus.trf_signatures_history_biud()
+          RETURNS trigger AS
+        $BODY$
+        DECLARE
+        BEGIN
+
+        IF TG_OP = 'DELETE' THEN
+            -- при удалении не удаляем запись, а обновляем status на DELETED, пишем новое время действия
+            UPDATE ONLY antivirus.signatures
+                SET status = 'DELETED',
+                    updated_at = clock_timestamp()
+            WHERE id = OLD.id;
+            -- с текущей записью больше ничего не делаем
+            RETURN NULL;
+        ELSIF TG_OP = 'UPDATE' THEN
+            IF NEW.status = 'DELETED' AND OLD.status = 'DELETED' THEN
+                RAISE EXCEPTION 'Невозможно обновить удалённую запись без восстановления.';
+            END IF;
+            -- предотвращаем срабатывание триггера на пустые обновления
+            IF  NEW.id IS DISTINCT FROM OLD.id OR
+                NEW.threat_name IS DISTINCT FROM OLD.threat_name OR
+                NEW.first_bytes IS DISTINCT FROM OLD.first_bytes OR
+                NEW.remainder_hash IS DISTINCT FROM OLD.remainder_hash OR
+                NEW.remainder_length IS DISTINCT FROM OLD.remainder_length OR
+                NEW.file_type IS DISTINCT FROM OLD.file_type OR
+                NEW.offset_start IS DISTINCT FROM OLD.offset_start OR
+                NEW.offset_end IS DISTINCT FROM OLD.offset_end OR
+                NEW.digital_signature IS DISTINCT FROM OLD.digital_signature OR
+                NEW.status IS DISTINCT FROM OLD.status
+            THEN
+                -- при обновлении пишем новое время действия
+                NEW.updated_at := clock_timestamp();
+                -- вставляем в history предыдущее состояние
+                -- поле version_created_at - время предыдущего действия, поэтому берём его из OLD.updated_at
+                INSERT INTO antivirus.history (id, threat_name, first_bytes, remainder_hash, remainder_length, file_type
+                                        , offset_start, offset_end, digital_signature, status, updated_at, version_created_at)
+                SELECT OLD.id, OLD.threat_name, OLD.first_bytes, OLD.remainder_hash, OLD.remainder_length, OLD.file_type
+                     , OLD.offset_start, OLD.offset_end, OLD.digital_signature, OLD.status, OLD.updated_at, OLD.updated_at;
+                -- записываем новое состояние
+                RETURN NEW;
+            END IF;
+
+            RETURN NULL;
+        ELSIF TG_OP = 'INSERT' THEN
+            -- при вставке предыдущего значения нет в history ничего не пишем
+            RETURN NEW;
+        END IF;
+
+        END;
+        $BODY$
+          LANGUAGE plpgsql VOLATILE
+          COST 100;
+
+        COMMENT ON FUNCTION antivirus.trf_signatures_history_biud() IS 'Триггерная функция версионировании записей таблицы antivirus.signatures';
+        """,
+        """
+        DROP TRIGGER IF EXISTS tr_signatures_history_biud ON antivirus.signatures;
+        CREATE TRIGGER tr_signatures_history_biud
+          BEFORE INSERT OR UPDATE OR DELETE
+          ON antivirus.signatures
+          FOR EACH ROW
+          EXECUTE PROCEDURE antivirus.trf_signatures_history_biud();
+          
+        COMMENT ON TRIGGER tr_signatures_history_biud ON antivirus.signatures IS 'Триггер версионировании записей таблицы antivirus.signatures';
+        """,
+        """
+        --DROP FUNCTION IF EXISTS antivirus.trf_signatures_history_biud() CASCADE;
+        CREATE OR REPLACE FUNCTION antivirus.trf_audit_aiu()
+          RETURNS trigger AS
+        $BODY$
+        DECLARE
+            new_row jsonb := '{}';
+            old_row jsonb := '{}';
+        BEGIN
+
+        IF TG_OP = 'UPDATE' THEN
+            -- обрабатываем удаление записи
+            IF NEW.status = 'DELETED' THEN
+                INSERT INTO antivirus.audit (signature_id, changed_by, change_type, changed_at, fields_changed)
+                VALUES (NEW.id, DEFAULT, 'DELETED', NEW.updated_at, json_build_object('NEW', null, 'OLD', row_to_json(NEW)));
+            ELSE
+                -- добавляем только изменённые поля
+                IF NEW.id IS DISTINCT FROM OLD.id THEN
+                    SELECT old_row || jsonb_build_object('id', OLD.id), new_row || jsonb_build_object('id', NEW.id) INTO old_row, new_row;
+                END IF;
+                IF NEW.threat_name IS DISTINCT FROM OLD.threat_name THEN
+                    SELECT old_row || jsonb_build_object('threat_name', OLD.threat_name), new_row || jsonb_build_object('threat_name', NEW.threat_name) INTO old_row, new_row;
+                END IF;
+                IF NEW.first_bytes IS DISTINCT FROM OLD.first_bytes THEN
+                    SELECT old_row || jsonb_build_object('first_bytes', OLD.first_bytes), new_row || jsonb_build_object('first_bytes', NEW.first_bytes) INTO old_row, new_row;
+                END IF;
+                IF NEW.remainder_hash IS DISTINCT FROM OLD.remainder_hash THEN
+                    SELECT old_row || jsonb_build_object('remainder_hash', OLD.remainder_hash), new_row || jsonb_build_object('remainder_hash', NEW.remainder_hash) INTO old_row, new_row;
+                END IF;
+                IF NEW.remainder_length IS DISTINCT FROM OLD.remainder_length THEN
+                    SELECT old_row || jsonb_build_object('remainder_length', OLD.remainder_length), new_row || jsonb_build_object('remainder_length', NEW.remainder_length) INTO old_row, new_row;
+                END IF;
+                IF NEW.file_type IS DISTINCT FROM OLD.file_type THEN
+                    SELECT old_row || jsonb_build_object('file_type', OLD.file_type), new_row || jsonb_build_object('file_type', NEW.file_type) INTO old_row, new_row;
+                END IF;
+                IF NEW.offset_start IS DISTINCT FROM OLD.offset_start THEN
+                    SELECT old_row || jsonb_build_object('offset_start', OLD.offset_start), new_row || jsonb_build_object('offset_start', NEW.offset_start) INTO old_row, new_row;
+                END IF;
+                IF NEW.offset_end IS DISTINCT FROM OLD.offset_end THEN
+                    SELECT old_row || jsonb_build_object('offset_end', OLD.offset_end), new_row || jsonb_build_object('offset_end', NEW.offset_end) INTO old_row, new_row;
+                END IF;
+                IF NEW.digital_signature IS DISTINCT FROM OLD.digital_signature THEN
+                    SELECT old_row || jsonb_build_object('digital_signature', OLD.digital_signature), new_row || jsonb_build_object('digital_signature', NEW.digital_signature) INTO old_row, new_row;
+                END IF;
+                IF NEW.status IS DISTINCT FROM OLD.status THEN
+                    SELECT old_row || jsonb_build_object('status', OLD.status), new_row || jsonb_build_object('status', NEW.status) INTO old_row, new_row;
+                END IF;
+                IF NEW.updated_at IS DISTINCT FROM OLD.updated_at THEN
+                    SELECT old_row || jsonb_build_object('updated_at', OLD.updated_at), new_row || jsonb_build_object('updated_at', NEW.updated_at) INTO old_row, new_row;
+                END IF;
+                -- обрали изменённые данные, пишем в audit
+                INSERT INTO antivirus.audit (signature_id, changed_by, change_type, changed_at, fields_changed)
+                VALUES (OLD.id, DEFAULT, 'UPDATED', OLD.updated_at, json_build_object('NEW', new_row, 'OLD', old_row));
+            END IF;
+
+        ELSIF TG_OP = 'INSERT' THEN
+            -- пишем audit
+            INSERT INTO antivirus.audit (signature_id, changed_by, change_type, changed_at, fields_changed)
+            VALUES (NEW.id, DEFAULT, 'CREATED', NEW.updated_at, json_build_object('NEW', row_to_json(NEW), 'OLD', null));
+            -- обрабатываем вставку удалённой записи
+            IF NEW.status = 'DELETED' THEN
+                INSERT INTO antivirus.audit (signature_id, changed_by, change_type, changed_at, fields_changed)
+                VALUES (NEW.id, DEFAULT, 'DELETED', NEW.updated_at, json_build_object('NEW', null, 'OLD', row_to_json(NEW)));
+            END IF;
+        END IF;
+
+        RETURN NEW;
+        END;
+        $BODY$
+          LANGUAGE plpgsql VOLATILE
+          COST 100;
+
+        COMMENT ON FUNCTION antivirus.trf_audit_aiu() IS 'Триггерная функция аудита записей таблицы antivirus.signatures';
+        """,
+        """
+        DROP TRIGGER IF EXISTS tr_audit_aiu ON antivirus.signatures;
+        CREATE TRIGGER tr_audit_aiu
+          AFTER INSERT OR UPDATE
+          ON antivirus.signatures
+          FOR EACH ROW
+          EXECUTE PROCEDURE antivirus.trf_audit_aiu();
+
+        COMMENT ON TRIGGER tr_audit_aiu ON antivirus.signatures IS 'Триггер аудита записей таблицы antivirus.signatures';
         """
     ]
 
