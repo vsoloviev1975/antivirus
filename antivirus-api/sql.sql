@@ -301,3 +301,113 @@ $$ LANGUAGE plpgsql
 COST 100;
 
 COMMENT ON FUNCTION antivirus.scan_file_with_rabin_karp(UUID, UUID) IS 'Функция сканирования файлов с алгоритмом Рабина-Карпа';
+
+-- DROP FUNCTION IF EXISTS antivirus.signatures_iud(JSON);
+CREATE OR REPLACE FUNCTION antivirus.signatures_iud(p_data JSON)
+RETURNS UUID AS $$
+DECLARE
+    v_id UUID;
+    v_threat_name TEXT;
+    v_first_bytes VARCHAR(8);
+    v_remainder_hash VARCHAR(64);
+    v_remainder_length INT;
+    v_file_type TEXT;
+    v_offset_start INT;
+    v_offset_end INT;
+    v_digital_signature BYTEA;
+    v_status TEXT;
+    v_record_exists BOOLEAN;
+BEGIN
+    -- Извлекаем ID из JSON (может быть NULL для новой записи)
+    v_id := (p_data->>'id')::UUID;
+
+    -- Проверяем, существует ли запись с таким ID
+    IF v_id IS NOT NULL THEN
+        SELECT EXISTS(SELECT 1 FROM ONLY antivirus.signatures WHERE id = v_id) INTO v_record_exists;
+    ELSE
+        v_record_exists := FALSE;
+    END IF;
+
+    -- Если ID не указан или запись не существует - создаем новую
+    IF v_id IS NULL OR NOT v_record_exists THEN
+        -- Проверяем обязательные поля для создания новой записи
+        IF (p_data->>'threat_name') IS NULL OR
+           (p_data->>'first_bytes') IS NULL OR
+           (p_data->>'remainder_hash') IS NULL OR
+           (p_data->>'remainder_length') IS NULL OR
+           (p_data->>'file_type') IS NULL THEN
+            RAISE EXCEPTION 'Для создания новой сигнатуры необходимо указать threat_name, first_bytes, remainder_hash, remainder_length и file_type';
+        END IF;
+
+        -- Извлекаем значения из JSON
+        v_threat_name := p_data->>'threat_name';
+        v_first_bytes := p_data->>'first_bytes';
+        v_remainder_hash := p_data->>'remainder_hash';
+        v_remainder_length := (p_data->>'remainder_length')::INT;
+        v_file_type := p_data->>'file_type';
+        v_offset_start := (p_data->>'offset_start')::INT;
+        v_offset_end := (p_data->>'offset_end')::INT;
+        v_status := COALESCE(p_data->>'status', 'ACTUAL');
+
+        -- Вставляем новую запись
+        INSERT INTO antivirus.signatures (
+            id,
+            threat_name,
+            first_bytes,
+            remainder_hash,
+            remainder_length,
+            file_type,
+            offset_start,
+            offset_end,
+            status,
+            updated_at
+        ) VALUES (
+            COALESCE(v_id, gen_random_uuid()),
+            v_threat_name,
+            v_first_bytes,
+            v_remainder_hash,
+            v_remainder_length,
+            v_file_type,
+            v_offset_start,
+            v_offset_end,
+            v_status,
+            NOW()
+        ) RETURNING id INTO v_id;
+
+    -- Если указан только ID - удаляем запись
+    ELSEIF jsonb_object_keys(p_data::jsonb) = ARRAY['id'] THEN
+        DELETE FROM antivirus.signatures WHERE id = v_id;
+
+    -- Если запись существует и есть поля для обновления
+    ELSE
+        -- Формируем динамический UPDATE с учетом только переданных полей
+        EXECUTE format('
+            UPDATE ONLY antivirus.signatures SET
+                threat_name = COALESCE(%L, threat_name),
+                first_bytes = COALESCE(%L, first_bytes),
+                remainder_hash = COALESCE(%L, remainder_hash),
+                remainder_length = COALESCE(%L, remainder_length),
+                file_type = COALESCE(%L, file_type),
+                offset_start = COALESCE(%L, offset_start),
+                offset_end = COALESCE(%L, offset_end),
+                status = COALESCE(%L, status),
+                updated_at = NOW()
+            WHERE id = %L
+            RETURNING id',
+            p_data->>'threat_name',
+            p_data->>'first_bytes',
+            p_data->>'remainder_hash',
+            (p_data->>'remainder_length')::INT,
+            p_data->>'file_type',
+            (p_data->>'offset_start')::INT,
+            (p_data->>'offset_end')::INT,
+            p_data->>'status',
+            v_id
+        ) INTO v_id;
+    END IF;
+
+    RETURN v_id;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION antivirus.signatures_iud(JSON) IS 'Функция для добавления/изменения/удаления записей в таблице signatures на основе входного JSON';
