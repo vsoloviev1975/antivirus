@@ -179,7 +179,7 @@ DECLARE
     v_result_entry JSONB;               -- Запись результата
     v_file_info_json JSONB;             -- Возврат результата
     v_cursor CURSOR FOR                 -- Курсор для выборки сигнатур
-        SELECT * FROM antivirus.signatures
+        SELECT * FROM ONLY antivirus.signatures
         WHERE status = 'ACTUAL'
         AND (p_signature_id IS NULL OR id = p_signature_id);
 BEGIN
@@ -244,9 +244,9 @@ BEGIN
         v_result_entry := jsonb_build_object(
             'signatureId', v_signature_record.id,
             'threatName', v_signature_record.threat_name,
-            'offsetFromStart', CASE WHEN v_match_found THEN (v_offset_start - 1) ELSE NULL END,
+            'offsetFromStart', CASE WHEN v_match_found THEN (v_offset_start) ELSE NULL END,
             'offsetFromEnd', CASE WHEN v_match_found THEN
-                (v_offset_start + v_window_size + v_signature_record.remainder_length - 1)
+                (v_offset_start + v_window_size + v_signature_record.remainder_length)
                 ELSE NULL END,
             'matched', v_match_found
         );
@@ -302,7 +302,7 @@ BEGIN
 
     -- Проверяем, существует ли запись с таким ID
     IF v_id IS NOT NULL THEN
-        SELECT EXISTS(SELECT 1 FROM antivirus.signatures WHERE id = v_id) INTO v_record_exists;
+        SELECT EXISTS(SELECT 1 FROM ONLY antivirus.signatures WHERE id = v_id) INTO v_record_exists;
     ELSE
         v_record_exists := FALSE;
     END IF;
@@ -358,13 +358,13 @@ BEGIN
 
     -- Если указан только ID - удаляем запись
     ELSEIF array_length(v_keys, 1) = 1 AND v_keys[1] = 'id' THEN
-        DELETE FROM antivirus.signatures WHERE id = v_id;
+        DELETE FROM ONLY antivirus.signatures WHERE id = v_id;
 
     -- Если запись существует и есть поля для обновления
     ELSE
         -- Формируем динамический UPDATE с учетом только переданных полей
         EXECUTE format('
-            UPDATE antivirus.signatures SET
+            UPDATE ONLY antivirus.signatures SET
                 threat_name = COALESCE(%L, threat_name),
                 first_bytes = COALESCE(%L, first_bytes),
                 remainder_hash = COALESCE(%L, remainder_hash),
@@ -393,7 +393,6 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION antivirus.signatures_iud(JSON) IS 'Функция для добавления/изменения/удаления записей в таблице signatures на основе входного JSON';
-
 --DROP FUNCTION IF EXISTS antivirus.trf_signatures_history_biud() CASCADE;
 CREATE OR REPLACE FUNCTION antivirus.trf_signatures_history_biud()
   RETURNS trigger AS

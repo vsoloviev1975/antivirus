@@ -260,7 +260,7 @@ def get_actual_signatures_json(since: Optional[datetime] = None) -> Optional[Lis
                     'status', status,
                     'updated_at', updated_at
                 ) as signature_info
-            FROM antivirus.signatures
+            FROM ONLY antivirus.signatures
             WHERE status = 'ACTUAL'
         """
         
@@ -312,7 +312,7 @@ def get_signatures_by_guids(guid_list: List[UUID]) -> Optional[List[dict]]:
                     'status', status,
                     'updated_at', updated_at
                 ) as signature_info
-            FROM antivirus.signatures
+            FROM ONLY antivirus.signatures
             WHERE id = ANY(:guid_list)
             ORDER BY updated_at DESC
         """)
@@ -357,7 +357,7 @@ def get_signatures_by_status(status: str) -> List[dict]:
                     'status', status,
                     'updated_at', updated_at
                 ) as signature_info
-            FROM antivirus.signatures
+            FROM ONLY antivirus.signatures
             WHERE status = :status
             ORDER BY updated_at DESC
         """)

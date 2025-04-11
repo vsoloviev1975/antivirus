@@ -4,7 +4,7 @@ from pathlib import Path
 import uvicorn
 from typing import List, Optional
 from fastapi.responses import JSONResponse
-from database import check_and_create_postgres_db, get_database_engine, create_tables
+from database import check_and_create_postgres_db, get_database_engine, create_tables, init_db
 from dbengine import call_files_iud_function, get_file_info_json, get_all_files_json, delete_file_id, call_signatures_iud_function, get_actual_signatures_json
 from dbengine import get_signatures_by_guids, get_signatures_by_status, scan_file_with_rabin_karp
 import logging
@@ -41,27 +41,25 @@ app = FastAPI(title="Antivirus File Storage API")
 @app.on_event("startup")
 async def startup_event():
     try:
-        logger.info("Initializing database connection")
+        logger.info("Проверка и создание базы данных...")
         
-        # Проверяем и создаем БД без автоматического начала транзакции
+        # 1. Проверяем и создаём БД (если её нет)
         if not check_and_create_postgres_db():
-            logger.error("Failed to check/create database")
-            raise RuntimeError("Failed to check/create database")
+            logger.error("Ошибка при создании базы данных")
+            raise RuntimeError("Не удалось создать базу данных")
         
-        # Получаем engine с явным уровнем изоляции
-        engine = get_database_engine()
-        if engine is None:
-            logger.error("Failed to connect to database")
-            raise RuntimeError("Failed to connect to database")
+        # 2. Инициализируем движок SQLAlchemy
+        logger.info("Инициализация подключения к базе...")
+        engine = init_db()  # Теперь движок создаётся после проверки БД
         
-        # Создаем таблицы в отдельном соединении
-        with engine.begin() as conn:  # Явное управление транзакцией
-            create_tables()
-            logger.info("Database tables created successfully")
-            
+        # 3. Создаём таблицы
+        logger.info("Создание таблиц...")
+        create_tables()
+        logger.info("База данных готова!")
+        
     except Exception as e:
-        logger.critical(f"Database initialization failed: {str(e)}", exc_info=True)
-        raise RuntimeError("Failed to initialize database")
+        logger.critical(f"Ошибка инициализации базы: {str(e)}", exc_info=True)
+        raise RuntimeError("Не удалось запустить базу данных")
 """
 Создает или обновляет файл в базе данных
 - **file**: Файл для загрузки (обязательно)
