@@ -69,7 +69,7 @@ COMMENT ON COLUMN antivirus.signatures.status IS 'Статус записи';
 COMMENT ON COLUMN antivirus.signatures.updated_at IS 'Время изменения записи';
 
 -- 4. Создаем таблицу history
-CREATE TABLE antivirus.history (
+CREATE TABLE IF NOT EXISTS antivirus.history (
     history_id BIGSERIAL PRIMARY KEY,
     version_created_at  TIMESTAMP NOT NULL
 ) INHERITS (antivirus.signatures);

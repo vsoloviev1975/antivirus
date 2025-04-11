@@ -401,8 +401,106 @@ def scan_file_with_rabin_karp(file_id: UUID, signature_id: Optional[UUID] = None
         return {}
     finally:
         db.close()
+        
+"""
+Получает историю изменений сигнатур из таблицы antivirus.history
+:param signature_id: UUID сигнатуры для фильтрации (опциональный)
+:param limit: Ограничение количества записей (опциональный)
+:return: Список словарей с историей изменений
+"""
+def get_signatures_history(signature_id: Optional[UUID] = None, limit: Optional[int] = None) -> List[dict]:
+    db = next(get_db())
+    try:
+        query = text("""
+            SELECT 
+                json_build_object(
+                    'history_id', history_id,
+                    'signature_id', id::text,
+                    'threat_name', threat_name,
+                    'first_bytes', first_bytes,
+                    'remainder_hash', remainder_hash,
+                    'remainder_length', remainder_length,
+                    'file_type', file_type,
+                    'offset_start', offset_start,
+                    'offset_end', offset_end,
+                    'status', status,
+                    'version_created_at', version_created_at,
+                    'updated_at', updated_at
+                ) as history_entry
+            FROM antivirus.history
+            WHERE (:signature_id IS NULL OR id = :signature_id)
+            ORDER BY version_created_at DESC
+            LIMIT :limit
+        """)
+        
+        params = {
+            "signature_id": signature_id,
+            "limit": limit if limit is not None else 1000  # Дефолтный лимит
+        }
+        
+        result = db.execute(query, params)
+        return [row[0] for row in result.fetchall()]
+        
+    except SQLAlchemyError:
+        db.rollback()
+        return []
+    finally:
+        db.close()
+        
+"""
+Получает записи аудита из таблицы antivirus.audit
+:param entity_type: Тип сущности для фильтрации (опционально)
+:param operation_type: Тип операции (опционально)
+:param limit: Ограничение количества записей (по умолчанию 100)
+:return: Список записей аудита в виде словарей
+"""
+def get_audit_logs(
+    entity_type: Optional[str] = None,
+    operation_type: Optional[str] = None,
+    limit: int = 100
+) -> List[dict]:
+    db = next(get_db())
+    try:
+        query = text("""
+            SELECT 
+                json_build_object(
+                    'audit_id', audit_id,
+                    'entity_type', entity_type,
+                    'entity_id', entity_id,
+                    'operation_type', operation_type,
+                    'operation_at', operation_at,
+                    'user_id', user_id,
+                    'old_values', old_values,
+                    'new_values', new_values,
+                    'ip_address', ip_address,
+                    'user_agent', user_agent
+                ) as audit_entry
+            FROM antivirus.audit
+            WHERE (:entity_type IS NULL OR entity_type = :entity_type)
+              AND (:operation_type IS NULL OR operation_type = :operation_type)
+            ORDER BY operation_at DESC
+            LIMIT :limit
+        """)
+        
+        params = {
+            "entity_type": entity_type,
+            "operation_type": operation_type,
+            "limit": limit
+        }
+        
+        result = db.execute(query, params)
+        return [row[0] for row in result.fetchall()]
+        
+    except SQLAlchemyError:
+        db.rollback()
+        return []
+    finally:
+        db.close()
+
+    
 
 # Экспортируем для использования в моделях
 __all__ = ['call_files_iud_function', 'get_file_info_json', 'get_all_files_json', 
            'delete_file_id', 'call_signatures_iud_function', 'get_actual_signatures_json',
-           'get_signatures_by_guids', 'get_signatures_by_status', 'scan_file_with_rabin_karp']        
+           'get_signatures_by_guids', 'get_signatures_by_status', 'scan_file_with_rabin_karp',
+           'get_signatures_history', 'get_audit_logs']        

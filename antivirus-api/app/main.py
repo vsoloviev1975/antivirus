@@ -1,4 +1,4 @@
-﻿from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body
+﻿from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body, Query
 from uuid import UUID
 from pathlib import Path
 import uvicorn
@@ -6,7 +6,7 @@ from typing import List, Optional
 from fastapi.responses import JSONResponse
 from database import check_and_create_postgres_db, get_database_engine, create_tables, init_db
 from dbengine import call_files_iud_function, get_file_info_json, get_all_files_json, delete_file_id, call_signatures_iud_function, get_actual_signatures_json
-from dbengine import get_signatures_by_guids, get_signatures_by_status, scan_file_with_rabin_karp
+from dbengine import get_signatures_by_guids, get_signatures_by_status, scan_file_with_rabin_karp, get_signatures_history, get_audit_logs
 import logging
 from logging.handlers import RotatingFileHandler
 from sqlalchemy.exc import SQLAlchemyError
@@ -418,6 +418,79 @@ async def scan_file(
     except Exception as e:
         logger.critical(f"Unexpected error during scan: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")        
+        
+"""
+Получает историю изменений сигнатур
+- **signature_id**: UUID сигнатуры для фильтрации (опциональный)
+- **limit**: Максимальное количество записей (опциональный, по умолчанию 100)
+Возвращает список объектов с историей изменений
+"""
+@app.get("/history", response_model=List[dict])
+async def get_history_signatures(
+    signature_id: Optional[str] = None, 
+    limit: Optional[int] = Query(100, gt=0, le=1000)
+):
+    try:
+        logger.info(f"Request received for history. Signature ID: {signature_id}, Limit: {limit}")
+        
+        # Валидация UUID если указан
+        signature_uuid = None
+        if signature_id:
+            try:
+                signature_uuid = UUID(signature_id)
+            except ValueError:
+                logger.error(f"Invalid signature UUID format: {signature_id}")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid signature ID format"
+                )
+        
+        # Получаем историю из БД
+        history = get_signatures_history(signature_uuid, limit)
+        
+        logger.info(f"Successfully retrieved {len(history)} history entries")
+        return history
+        
+    except SQLAlchemyError as e:
+        logger.error(f"Database error while fetching history: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Database operation failed")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.critical(f"Unexpected error while fetching history: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")        
+        
+        """
+Получает записи аудита из системы
+- **entity_type**: Фильтр по типу сущности (опционально)
+- **operation_type**: Фильтр по типу операции (CREATED/UPDATED/DELETED) (опционально)
+- **limit**: Максимальное количество записей (по умолчанию 100, максимум 1000)
+Возвращает список записей аудита
+"""
+@app.get("/audit", response_model=List[dict])
+async def get_audit_signatures(
+    entity_type: Optional[str] = None,
+    operation_type: Optional[str] = None,
+    limit: int = Query(default=100, gt=0, le=1000)
+):
+    try:
+        logger.info(
+            f"Request received for audit logs. Entity type: {entity_type}, "
+            f"Operation type: {operation_type}, Limit: {limit}"
+        )
+        
+        # Получаем данные из БД
+        audit_logs = get_audit_logs(entity_type, operation_type, limit)
+        
+        logger.info(f"Successfully retrieved {len(audit_logs)} audit log entries")
+        return audit_logs
+        
+    except SQLAlchemyError as e:
+        logger.error(f"Database error while fetching audit logs: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Database operation failed")
+    except Exception as e:
+        logger.critical(f"Unexpected error while fetching audit logs: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

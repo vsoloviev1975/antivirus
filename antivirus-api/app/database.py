@@ -181,7 +181,7 @@ def create_tables():
         """,
         """
         -- 4. Создаем таблицу history
-        CREATE TABLE antivirus.history (
+        CREATE TABLE IF NOT EXISTS antivirus.history (
             history_id BIGSERIAL PRIMARY KEY,
             version_created_at  TIMESTAMP NOT NULL
         ) INHERITS (antivirus.signatures);

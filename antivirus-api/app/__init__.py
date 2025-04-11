@@ -9,7 +9,7 @@
 
 from database import Base, engine, get_db, create_tables, init_db
 from dbengine import call_files_iud_function, get_file_info_json, get_all_files_json, delete_file_id, call_signatures_iud_function, get_actual_signatures_json
-from dbengine import get_signatures_by_guids, get_signatures_by_status, scan_file_with_rabin_karp
+from dbengine import get_signatures_by_guids, get_signatures_by_status, scan_file_with_rabin_karp, get_signatures_history, get_audit_logs
 
 __all__ = [
     'Base',
@@ -24,5 +24,7 @@ __all__ = [
     'call_signatures_iud_function',
     'get_actual_signatures_json',
     'get_signatures_by_status',
-    'scan_file_with_rabin_karp'
+    'scan_file_with_rabin_karp',
+    'get_signatures_history',
+    'get_audit_logs'
 ]
