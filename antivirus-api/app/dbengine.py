@@ -461,6 +461,12 @@ def get_audit_logs(
 ) -> List[dict]:
     db = next(get_db())
     try:
+        s_id = None
+        if entity_type:
+            s_id = UUID(entity_type)
+        if operation_type=="":
+            operation_type=None
+
         query = text("""
             SELECT 
                 json_build_object(
@@ -472,16 +478,20 @@ def get_audit_logs(
                     'fields_changed', fields_changed
                 ) as audit_entry
             FROM antivirus.audit
-            ORDER BY changed_at DESC
+            WHERE (:operation_type IS NULL OR change_type = :operation_type) AND
+                  (:s_id IS NULL OR signature_id = :s_id)
+            ORDER BY audit_id DESC
+            LIMIT :limit
         """)
+        print(query)
         
-#        params = {
-#            "entity_type": entity_type,
-#            "operation_type": operation_type,
-#            "limit": limit
-#        }
-        
-        result = db.execute(query)
+        params = {
+            "s_id": s_id,
+            "operation_type": operation_type,
+            "limit": limit
+        }
+        print(params)
+        result = db.execute(query, params)
         return [row[0] for row in result.fetchall()]
         
     except SQLAlchemyError:
