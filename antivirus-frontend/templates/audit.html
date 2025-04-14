@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Журнал аудита</h2>
+    
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    <label for="entity_type" class="form-label">Тип сущности</label>
+                    <input type="text" class="form-control" id="entity_type" 
+                           name="entity_type" value="{{ entity_type or '' }}">
+                </div>
+                <div class="col-md-4">
+                    <label for="operation_type" class="form-label">Тип операции</label>
+                    <select class="form-select" id="operation_type" name="operation_type">
+                        <option value="">Все</option>
+                        <option value="CREATED" {% if operation_type == 'CREATED' %}selected{% endif %}>Создание</option>
+                        <option value="UPDATED" {% if operation_type == 'UPDATED' %}selected{% endif %}>Изменение</option>
+                        <option value="DELETED" {% if operation_type == 'DELETED' %}selected{% endif %}>Удаление</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label for="limit" class="form-label">Лимит записей</label>
+                    <input type="number" class="form-control" id="limit" 
+                           name="limit" value="{{ limit }}" min="1" max="1000">
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary">Фильтровать</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    {% if audit_logs %}
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Дата</th>
+                        <th>Тип операции</th>
+                        <th>Измененные поля</th>
+                        <th>ID сигнатуры</th>
+                        <th>Пользователь</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in audit_logs %}
+                    <tr>
+                        <td>{{ log.changed_at }}</td>
+                        <td>
+                            <span class="badge bg-{{ 
+                                'success' if log.change_type == 'CREATED' else 
+                                'warning' if log.change_type == 'UPDATED' else 
+                                'danger' }}">
+                                {{ log.change_type }}
+                            </span>
+                        </td>
+                        <td>{{ log.fields_changed }}</td>
+                        <td>{{ log.signature_id }}</td>
+                        <td>{{ log.changed_by }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="alert alert-info">Нет данных для отображения</div>
+    {% endif %}
+</div>
+{% endblock %}

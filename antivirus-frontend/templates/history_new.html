@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>История изменений сигнатур</h2>
+    <h1>{{history}}</h1>
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-6">
+                    <label for="signature_id" class="form-label">ID сигнатуры</label>
+                    <input type="text" class="form-control" id="signature_id" 
+                           name="signature_id" value="{{ signature_id or '' }}">
+                </div>
+                <div class="col-md-4">
+                    <label for="limit" class="form-label">Лимит записей</label>
+                    <input type="number" class="form-control" id="limit" 
+                           name="limit" value="{{ limit }}" min="1" max="1000">
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary">Фильтровать</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    {% if history %}
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Дата изменения</th>
+                        <th>ID сигнатуры</th>
+                        <th>Название угрозы</th>
+                        <th>Статус</th>
+                        <th>Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in history %}
+                    <tr>
+                        <td>{{ entry.version_created_at }}</td>
+                        <td>{{ entry.signature_id }}</td>
+                        <td>{{ entry.threat_name }}</td>
+                        <td>
+                            <span class="badge bg-{{ 'success' if entry.status == 'ACTUAL' else 'secondary' }}">
+                                {{ entry.status }}
+                            </span>
+                        </td>
+                        <td>
+                            <a href="{{ url_for('history') }}?signature_id={{ entry.signature_id }}" 
+                               class="btn btn-sm btn-outline-primary">
+                                Фильтровать
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="alert alert-info">Нет данных для отображения</div>
+    {% endif %}
+</div>
+{% endblock %}

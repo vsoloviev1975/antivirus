@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <h1 class="mb-4">
+        {% if request.args.get('id') %}Редактирование{% else %}Добавление{% endif %} сигнатуры
+    </h1>
+    
+    <div class="card">
+        <div class="card-body">
+            <form method="post">
+                {% if request.args.get('id') %}
+                    <input type="hidden" name="id" value="{{ request.args.get('id') }}">
+                {% endif %}
+                
+                <div class="mb-3">
+                    <label for="threat_name" class="form-label">Название угрозы</label>
+                    <input type="text" class="form-control" id="threat_name" name="threat_name" required value="{% if request.args.get('id') %}{{ json.threat_name }}{%endif%}" >
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="first_bytes" class="form-label">Первые байты (hex)</label>
+                        <input type="text" class="form-control" id="first_bytes" name="first_bytes" required>
+                        <div class="form-text">Первые 8 байт сигнатуры в hex-формате</div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label for="remainder_hash" class="form-label">Хэш хвоста</label>
+                        <input type="text" class="form-control" id="remainder_hash" name="remainder_hash" required>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <label for="remainder_length" class="form-label">Длина хвоста</label>
+                        <input type="number" class="form-control" id="remainder_length" name="remainder_length" required>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label for="offset_start" class="form-label">Смещение начала</label>
+                        <input type="number" class="form-control" id="offset_start" name="offset_start">
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label for="offset_end" class="form-label">Смещение конца</label>
+                        <input type="number" class="form-control" id="offset_end" name="offset_end">
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="file_type" class="form-label">Тип файла</label>
+                        <input type="text" class="form-control" id="file_type" name="file_type" required>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label for="status" class="form-label">Статус</label>
+                        <select class="form-select" id="status" name="status">
+                            <option value="ACTUAL" selected>ACTUAL</option>
+                            <option value="DELETED">DELETED</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="d-flex justify-content-between">
+                    <a href="{{ url_for('list_signatures') }}" class="btn btn-secondary">Отмена</a>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+{% endblock %}

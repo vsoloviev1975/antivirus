@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>Файл: {{ file.name }}</h1>
+        <div>
+            <a href="{{ url_for('scan_file', file_id=file.id) }}" class="btn btn-success">Сканировать</a>
+            <a href="{{ url_for('delete_file', file_id=file.id) }}" class="btn btn-danger" onclick="return confirm('Удалить файл?')">Удалить</a>
+        </div>
+    </div>
+    
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Информация о файле</h5>
+            <ul class="list-group list-group-flush">
+                <li class="list-group-item"><strong>ID:</strong> {{ file.id }}</li>
+                <li class="list-group-item"><strong>Размер:</strong> {{ file.size }} байт</li>
+                <li class="list-group-item"><strong>Загружен:</strong> {{ file.created_at }}</li>
+                <li class="list-group-item"><strong>Обновлен:</strong> {{ file.updated_at }}</li>
+            </ul>
+        </div>
+    </div>
+    
+    {% if file.scan_result %}
+        <div class="card">
+            <div class="card-header">
+                <h5>Результаты сканирования</h5>
+            </div>
+            <div class="card-body">
+                <pre>{{ file.scan_result | tojson(indent=2) }}</pre>
+            </div>
+        </div>
+    {% endif %}
+    
+    <div class="mt-3">
+        <a href="{{ url_for('index') }}" class="btn btn-secondary">Назад к списку</a>
+    </div>
+{% endblock %}

@@ -491,6 +491,14 @@ async def get_audit_signatures(
     except Exception as e:
         logger.critical(f"Unexpected error while fetching audit logs: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+        
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "service": "antivirus-backend",
+        "version": "1.0.0"
+    }        
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

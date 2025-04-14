@@ -465,30 +465,23 @@ def get_audit_logs(
             SELECT 
                 json_build_object(
                     'audit_id', audit_id,
-                    'entity_type', entity_type,
-                    'entity_id', entity_id,
-                    'operation_type', operation_type,
-                    'operation_at', operation_at,
-                    'user_id', user_id,
-                    'old_values', old_values,
-                    'new_values', new_values,
-                    'ip_address', ip_address,
-                    'user_agent', user_agent
+                    'signature_id', signature_id,
+                    'changed_by', changed_by,
+                    'change_type', change_type,
+                    'changed_at', changed_at,
+                    'fields_changed', fields_changed
                 ) as audit_entry
             FROM antivirus.audit
-            WHERE (:entity_type IS NULL OR entity_type = :entity_type)
-              AND (:operation_type IS NULL OR operation_type = :operation_type)
-            ORDER BY operation_at DESC
-            LIMIT :limit
+            ORDER BY changed_at DESC
         """)
         
-        params = {
-            "entity_type": entity_type,
-            "operation_type": operation_type,
-            "limit": limit
-        }
+#        params = {
+#            "entity_type": entity_type,
+#            "operation_type": operation_type,
+#            "limit": limit
+#        }
         
-        result = db.execute(query, params)
+        result = db.execute(query)
         return [row[0] for row in result.fetchall()]
         
     except SQLAlchemyError:

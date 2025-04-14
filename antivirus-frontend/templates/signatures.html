@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>Антивирусные сигнатуры</h1>
+        <a href="{{ url_for('manage_signature') }}" class="btn btn-primary">Добавить сигнатуру</a>
+    </div>
+    
+    {% if signatures %}
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Угроза</th>
+                        <th>Тип файла</th>
+                        <th>Статус</th>
+                        <th>Обновлено</th>
+                        <th>Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for sig in signatures %}
+                        <tr>
+                            <td>{{ sig.id }}</td>
+                            <td>{{ sig.threat_name }}</td>
+                            <td>{{ sig.file_type }}</td>
+                            <td>
+                                <span class="badge bg-{{ 'success' if sig.status == 'ACTUAL' else 'secondary' }}">
+                                    {{ sig.status }}
+                                </span>
+                            </td>
+                            <td>{{ sig.updated_at }}</td>
+                            <td>
+                                <a href="{{ url_for('manage_signature') }}?id={{ sig.id }}" class="btn btn-sm btn-outline-primary">Редактировать</a>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="alert alert-info">Нет доступных сигнатур</div>
+    {% endif %}
+{% endblock %}

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <h1 class="mb-4">Результаты сканирования</h1>
+    
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Детали сканирования</h5>
+            <div class="scan-result">
+                <pre>{{ result | tojson(indent=2) }}</pre>
+            </div>
+        </div>
+    </div>
+    
+    <div class="d-flex justify-content-between">
+        <a href="{{ url_for('view_file', file_id=file_id) }}" class="btn btn-secondary">Назад к файлу</a>
+        <a href="{{ url_for('index') }}" class="btn btn-primary">На главную</a>
+    </div>
+{% endblock %}
