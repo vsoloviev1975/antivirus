@@ -3,9 +3,11 @@
 {% block content %}
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h1>Антивирусные сигнатуры</h1>
-        <a href="{{ url_for('manage_signature') }}" class="btn btn-primary">Добавить сигнатуру</a>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#signatureModal">
+            Добавить сигнатуру
+        </button>
     </div>
-    
+
     {% if signatures %}
         <div class="table-responsive">
             <table class="table table-striped">
@@ -30,9 +32,22 @@
                                     {{ sig.status }}
                                 </span>
                             </td>
-                            <td>{{ sig.updated_at }}</td>
+                            <td>{{ sig.updated_at|format_datetime }}</td>
                             <td>
-                                <a href="{{ url_for('manage_signature') }}?id={{ sig.id }}" class="btn btn-sm btn-outline-primary">Редактировать</a>
+                                <button class="btn btn-sm btn-outline-primary edit-btn"
+                                        data-bs-toggle="modal"
+                                        data-bs-target="#signatureModal"
+                                        data-id="{{ sig.id }}"
+                                        data-threat="{{ sig.threat_name }}"
+                                        data-bytes="{{ sig.first_bytes }}"
+                                        data-hash="{{ sig.remainder_hash }}"
+                                        data-length="{{ sig.remainder_length }}"
+                                        data-type="{{ sig.file_type }}"
+                                        data-start="{{ sig.offset_start }}"
+                                        data-end="{{ sig.offset_end }}"
+                                        data-status="{{ sig.status }}">
+                                    Редактировать
+                                </button>
                             </td>
                         </tr>
                     {% endfor %}
@@ -42,4 +57,136 @@
     {% else %}
         <div class="alert alert-info">Нет доступных сигнатур</div>
     {% endif %}
+
+    <!-- Модальное окно -->
+    <div class="modal fade" id="signatureModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Редактировать/добавить сигнатуру</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <form method="post" id="signatureForm" action="{{ url_for('manage_signature') }}">
+                    <div class="modal-body">
+                        <input type="hidden" id="signatureId" name="id">
+                        <div class="mb-3">
+                            <label for="threatName" class="form-label">Название угрозы</label>
+                            <input type="text" class="form-control" id="threatName" name="threat_name" required>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="firstBytes" class="form-label">Первые 8 байт сигнатуры</label>
+                                <input type="text" class="form-control" id="firstBytes" name="first_bytes" required>
+                                <div class="form-text">Первые 8 байт сигнатуры</div>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="remainderHash" class="form-label">Хэш хвоста</label>
+                                <input type="text" class="form-control" id="remainderHash" name="remainder_hash" required>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <label for="remainderLength" class="form-label">Длина хвоста</label>
+                                <input type="number" class="form-control" id="remainderLength" name="remainder_length" required>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label for="offsetStart" class="form-label">Смещение начала</label>
+                                <input type="number" class="form-control" id="offsetStart" name="offset_start">
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label for="offsetEnd" class="form-label">Смещение конца</label>
+                                <input type="number" class="form-control" id="offsetEnd" name="offset_end">
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="fileType" class="form-label">Тип файла</label>
+                                <input type="text" class="form-control" id="fileType" name="file_type" required>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="status" class="form-label">Статус</label>
+                                <select class="form-select" id="status" name="status">
+                                    <option value="ACTUAL" selected>ACTUAL</option>
+                                    <option value="DELETED">DELETED</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                        <button type="submit" class="btn btn-primary">Сохранить</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const modalElement = document.getElementById('signatureModal');
+    const modal = new bootstrap.Modal(modalElement);
+
+    // Обработчик для закрытия модального окна
+    modalElement.addEventListener('hidden.bs.modal', function() {
+        // Удаляем оставшиеся элементы затемнения
+        const backdrops = document.querySelectorAll('.modal-backdrop');
+        backdrops.forEach(backdrop => backdrop.remove());
+        
+        // Восстанавливаем скролл и стили body
+        document.body.style.overflow = '';
+        document.body.style.paddingRight = '';
+    });
+
+
+    // Обработчик для кнопок редактирования
+    document.querySelectorAll('.edit-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            console.log('Данные кнопки:', {
+                id: this.dataset.id,
+                threat: this.dataset.threat,
+                bytes: this.dataset.bytes,
+                hash: this.dataset.hash,
+                length: this.dataset.length,
+                type: this.dataset.type,
+                start: this.dataset.start,
+                end: this.dataset.end,
+                status: this.dataset.status
+            });
+
+            // Заполняем форму
+            document.getElementById('signatureId').value = this.dataset.id || '';
+            document.getElementById('threatName').value = this.dataset.threat || '';
+            document.getElementById('firstBytes').value = this.dataset.bytes || '';
+            document.getElementById('remainderHash').value = this.dataset.hash || '';
+            document.getElementById('remainderLength').value = this.dataset.length || '';
+            document.getElementById('fileType').value = this.dataset.type || '';
+            document.getElementById('offsetStart').value = this.dataset.start || '';
+            document.getElementById('offsetEnd').value = this.dataset.end || '';
+            document.getElementById('status').value = this.dataset.status || 'ACTUAL';
+
+            // Проверка заполнения
+            // console.log('Значения формы после заполнения:', {
+            //    threatName: document.getElementById('threatName').value,
+            //    firstBytes: document.getElementById('firstBytes').value
+            // });
+
+            // Инициализация модального окна
+            const modal = new bootstrap.Modal(document.getElementById('signatureModal'));
+            modal.show();
+        });
+    });
+
+    // Сброс формы для добавления новой сигнатуры
+    document.querySelector('[data-bs-target="#signatureModal"]').addEventListener('click', function() {
+        document.getElementById('signatureForm').reset();
+        document.getElementById('status').value = 'ACTUAL';
+        document.getElementById('signatureId').value = '';
+    });
+});
+</script>
 {% endblock %}

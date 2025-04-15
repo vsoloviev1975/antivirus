@@ -60,15 +60,30 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 РОУТИНГ И КОНТРОЛЛЕРЫ
 """
 
-@app.route('/')
-def index():
-    """
+"""
+Фильтр для дат
+"""
+@app.template_filter('format_datetime')
+def format_datetime(value):
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        return value.strftime('%Y-%m-%d %H:%M')
+    except AttributeError:
+        return str(value)
+
+
+"""
     Главная страница приложения
     Показывает:
     - Форму загрузки файлов
     - Список всех загруженных файлов
     - Кнопки действий для каждого файла
-    """
+"""
+@app.route('/')
+def index():
     try:
         logger.info("Обработка запроса главной страницы")
         
@@ -93,10 +108,7 @@ def index():
         logger.critical(f"Критическая ошибка: {str(e)}")
         flash("Внутренняя ошибка сервера", "danger")
         return render_template('index.html', files=[])
-
-@app.route('/upload', methods=['POST'])
-def upload_file():
-    """
+"""
     Обработчик загрузки файла
     Действия:
     1. Сохраняет файл во временную папку
@@ -104,6 +116,8 @@ def upload_file():
     3. Удаляет временный файл
     4. Возвращает статус операции
     """
+@app.route('/upload', methods=['POST'])
+def upload_file():
     try:
         logger.info("Начало обработки загрузки файла")
         
@@ -158,15 +172,14 @@ def upload_file():
         logger.critical(f"Ошибка загрузки: {str(e)}")
         flash("Внутренняя ошибка сервера", "danger")
         return redirect(url_for('index'))
-
-@app.route('/file/<file_id>')
-def view_file(file_id):
-    """
+"""
     Просмотр детальной информации о файле
     Включает:
     - Основные метаданные
     - Результаты сканирования (если есть)
     """
+@app.route('/file/<file_id>')
+def view_file(file_id):
     try:
         logger.info(f"Запрос информации о файле: {file_id}")
         
@@ -203,12 +216,11 @@ def view_file(file_id):
         logger.critical(f"Критическая ошибка: {str(e)}")
         flash("Внутренняя ошибка", "danger")
         return redirect(url_for('index'))
-
+"""
+Удаление файла по ID
+"""
 @app.route('/delete/<file_id>')
 def delete_file(file_id):
-    """
-    Удаление файла по ID
-    """
     try:
         logger.info(f"Запрос удаления файла: {file_id}")
         
@@ -245,13 +257,12 @@ def delete_file(file_id):
         logger.critical(f"Критическая ошибка: {str(e)}")
         flash("Внутренняя ошибка", "danger")
         return redirect(url_for('index'))
-
+"""
+Инициация сканирования файла
+Возвращает страницу с результатами
+"""
 @app.route('/scan/<file_id>')
 def scan_file(file_id):
-    """
-    Инициация сканирования файла
-    Возвращает страницу с результатами
-    """
     try:
         logger.info(f"Запрос сканирования файла: {file_id}")
         
@@ -292,15 +303,14 @@ def scan_file(file_id):
         logger.critical(f"Критическая ошибка: {str(e)}")
         flash("Внутренняя ошибка", "danger")
         return redirect(url_for('index'))
-
+"""
+Страница управления антивирусными сигнатурами
+Показывает:
+- Таблицу всех сигнатур
+- Кнопки управления
+"""
 @app.route('/signatures')
 def list_signatures():
-    """
-    Страница управления антивирусными сигнатурами
-    Показывает:
-    - Таблицу всех сигнатур
-    - Кнопки управления
-    """
     try:
         logger.info("Запрос списка сигнатур")
         
@@ -324,19 +334,18 @@ def list_signatures():
         logger.critical(f"Критическая ошибка: {str(e)}")
         flash("Внутренняя ошибка", "danger")
         return render_template('signatures.html', signatures=[])
-
+"""
+Форма управления сигнатурой (CRUD)
+Обрабатывает:
+- Создание новой сигнатуры
+- Редактирование существующей
+"""
 @app.route('/signature/manage', methods=['GET', 'POST'])
 def manage_signature():
-    """
-    Форма управления сигнатурой (CRUD)
-    Обрабатывает:
-    - Создание новой сигнатуры
-    - Редактирование существующей
-    """
     try:
         if request.method == 'GET':
             # Показ формы для новой/редактируемой сигнатуры
-            return render_template('manage_signature.html', json=[])
+            return render_template('manage_signature.html')
         
         # Обработка данных формы
         logger.info("Обработка данных сигнатуры")
@@ -382,15 +391,14 @@ def manage_signature():
         logger.critical(f"Критическая ошибка: {str(e)}")
         flash("Внутренняя ошибка", "danger")
         return redirect(url_for('list_signatures'))
-        
+"""
+Отображение страницы истории изменений сигнатур
+Параметры запроса:
+- signature_id: фильтр по ID сигнатуры (опционально)
+- limit: ограничение количества записей (по умолчанию 100)
+"""        
 @app.route('/history')
 def history():
-    """
-    Отображение страницы истории изменений сигнатур
-    Параметры запроса:
-    - signature_id: фильтр по ID сигнатуры (опционально)
-    - limit: ограничение количества записей (по умолчанию 100)
-    """
     try:
         logger.info("Запрос истории изменений")
         
@@ -428,16 +436,15 @@ def history():
         logger.critical(f"Критическая ошибка: {str(e)}")
         flash("Внутренняя ошибка", "danger")
         return render_template('history.html', history=[])
-
+"""
+Отображение журнала аудита
+Параметры запроса:
+- entity_type: фильтр по типу сущности (опционально)
+- operation_type: фильтр по типу операции (CREATED/UPDATED/DELETED)
+- limit: ограничение количества записей (по умолчанию 100)
+"""
 @app.route('/audit')
 def audit():
-    """
-    Отображение журнала аудита
-    Параметры запроса:
-    - entity_type: фильтр по типу сущности (опционально)
-    - operation_type: фильтр по типу операции (CREATED/UPDATED/DELETED)
-    - limit: ограничение количества записей (по умолчанию 100)
-    """
     try:
         logger.info("Запрос журнала аудита")
         
